@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
+import capnp
 import os
 import sys
 import threading
 import importlib
 
 if "CI" in os.environ:
-  tqdm = lambda x: x
+  def tqdm(x):
+    return x
 else:
-  from tqdm import tqdm
+  from tqdm import tqdm   # type: ignore
 
 from cereal import car, log
 from selfdrive.car.car_helpers import get_car
@@ -19,6 +21,7 @@ from collections import namedtuple
 
 ProcessConfig = namedtuple('ProcessConfig', ['proc_name', 'pub_sub', 'ignore', 'init_callback', 'should_recv_callback'])
 
+
 def wait_for_event(evt):
   if not evt.wait(15):
     if threading.currentThread().getName() == "MainThread":
@@ -27,6 +30,7 @@ def wait_for_event(evt):
     else:
       # done testing this process, let it die
       sys.exit(0)
+
 
 class FakeSocket:
   def __init__(self, wait=True):
@@ -58,6 +62,7 @@ class FakeSocket:
   def wait_for_recv(self):
     wait_for_event(self.recv_called)
 
+
 class DumbSocket:
   def __init__(self, s=None):
     if s is not None:
@@ -69,6 +74,7 @@ class DumbSocket:
 
   def send(self, dat):
     pass
+
 
 class FakeSubMaster(messaging.SubMaster):
   def __init__(self, services):
@@ -101,15 +107,16 @@ class FakeSubMaster(messaging.SubMaster):
   def wait_for_update(self):
     wait_for_event(self.update_called)
 
+
 class FakePubMaster(messaging.PubMaster):
-  def __init__(self, services):
+  def __init__(self, services):  # pylint: disable=super-init-not-called
     self.data = {}
     self.sock = {}
     self.last_updated = None
     for s in services:
       try:
         data = messaging.new_message(s)
-      except:
+      except capnp.lib.capnp.KjException:
         data = messaging.new_message(s, 0)
       self.data[s] = data.as_reader()
       self.sock[s] = DumbSocket()
@@ -186,8 +193,14 @@ def radar_rcv_callback(msg, CP, cfg, fsm):
 def calibration_rcv_callback(msg, CP, cfg, fsm):
   # calibrationd publishes 1 calibrationData every 5 cameraOdometry packets.
   # should_recv always true to increment frame
-  recv_socks = ["liveCalibration"] if (fsm.frame + 1) % 5 == 0 else []
-  return recv_socks, True
+  if msg.which() == 'carState':
+    if ((fsm.frame + 1) % 25) == 0:
+      recv_socks = ["liveCalibration"]
+    else:
+      recv_socks = []
+    return recv_socks, True
+  else:
+    return [], False
 
 
 CONFIGS = [
@@ -195,7 +208,7 @@ CONFIGS = [
     proc_name="controlsd",
     pub_sub={
       "can": ["controlsState", "carState", "carControl", "sendcan", "carEvents", "carParams"],
-      "thermal": [], "health": [], "liveCalibration": [], "dMonitoringState": [], "plan": [], "pathPlan": [], "gpsLocation": [],
+      "thermal": [], "health": [], "liveCalibration": [], "dMonitoringState": [], "plan": [], "pathPlan": [], "gpsLocation": [], "liveLocationKalman": [],
       "model": [],
     },
     ignore=["logMonoTime", "valid", "controlsState.startMonoTime", "controlsState.cumLagMs"],
@@ -225,7 +238,8 @@ CONFIGS = [
   ProcessConfig(
     proc_name="calibrationd",
     pub_sub={
-      "cameraOdometry": ["liveCalibration"]
+      "carState": ["liveCalibration"],
+      "cameraOdometry": []
     },
     ignore=["logMonoTime", "valid"],
     init_callback=get_car_params,

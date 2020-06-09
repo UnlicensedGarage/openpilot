@@ -18,12 +18,15 @@ class TestLogHandler(logging.Handler):
 
   def reset(self):
     self.upload_order = list()
+    self.upload_ignored = list()
 
   def emit(self, record):
     try:
       j = json.loads(record.message)
       if j["event"] == "upload_success":
         self.upload_order.append(j["key"])
+      if j["event"] == "upload_ignored":
+        self.upload_ignored.append(j["key"])
     except Exception:
       pass
 
@@ -34,9 +37,6 @@ class TestUploader(UploaderTestCase):
   def setUp(self):
     super(TestUploader, self).setUp()
     log_handler.reset()
-
-  def tearDown(self):
-    super(TestUploader, self).tearDown()
 
   def start_thread(self):
     self.end_event = threading.Event()
@@ -58,9 +58,9 @@ class TestUploader(UploaderTestCase):
     keys = [f"{self.seg_format.format(i)}/qlog.bz2" for i in seg1]
     keys += [f"{self.seg_format2.format(i)}/qlog.bz2" for i in seg2]
     for i in seg1:
-      keys += [f"{self.seg_format.format(i)}/{f}" for f in ['rlog.bz2','fcamera.hevc','dcamera.hevc']]
+      keys += [f"{self.seg_format.format(i)}/{f}" for f in ['rlog.bz2', 'fcamera.hevc', 'dcamera.hevc']]
     for i in seg2:
-      keys += [f"{self.seg_format2.format(i)}/{f}" for f in ['rlog.bz2','fcamera.hevc','dcamera.hevc']]
+      keys += [f"{self.seg_format2.format(i)}/{f}" for f in ['rlog.bz2', 'fcamera.hevc', 'dcamera.hevc']]
     keys += [f"{self.seg_format.format(i)}/bootlog.bz2" for i in seg1]
     keys += [f"{self.seg_format2.format(i)}/bootlog.bz2" for i in seg2]
     return keys
@@ -73,6 +73,7 @@ class TestUploader(UploaderTestCase):
     time.sleep(5)
     self.join_thread()
 
+    self.assertTrue(len(log_handler.upload_ignored) == 0, "Some files were ignored")
     self.assertFalse(len(log_handler.upload_order) < len(f_paths), "Some files failed to upload")
     self.assertFalse(len(log_handler.upload_order) > len(f_paths), "Some files were uploaded twice")
     for f_path in f_paths:
@@ -80,13 +81,30 @@ class TestUploader(UploaderTestCase):
     exp_order = self.gen_order([self.seg_num], [])
     self.assertTrue(log_handler.upload_order == exp_order, "Files uploaded in wrong order")
 
+  def test_upload_ignored(self):
+    self.set_ignore()
+    f_paths = self.gen_files(lock=False)
+
+    self.start_thread()
+    # allow enough time that files could upload twice if there is a bug in the logic
+    time.sleep(5)
+    self.join_thread()
+
+    self.assertTrue(len(log_handler.upload_order) == 0, "Some files were not ignored")
+    self.assertFalse(len(log_handler.upload_ignored) < len(f_paths), "Some files failed to ignore")
+    self.assertFalse(len(log_handler.upload_ignored) > len(f_paths), "Some files were ignored twice")
+    for f_path in f_paths:
+      self.assertTrue(getxattr(f_path, uploader.UPLOAD_ATTR_NAME), "All files not ignored")
+    exp_order = self.gen_order([self.seg_num], [])
+    self.assertTrue(log_handler.upload_ignored == exp_order, "Files ignored in wrong order")
+
   def test_upload_files_in_create_order(self):
     f_paths = list()
-    seg1_nums = [0,1,2,10,20]
+    seg1_nums = [0, 1, 2, 10, 20]
     for i in seg1_nums:
       self.seg_dir = self.seg_format.format(i)
       f_paths += self.gen_files()
-    seg2_nums = [5,50,51]
+    seg2_nums = [5, 50, 51]
     for i in seg2_nums:
       self.seg_dir = self.seg_format2.format(i)
       f_paths += self.gen_files()
@@ -96,6 +114,7 @@ class TestUploader(UploaderTestCase):
     time.sleep(5)
     self.join_thread()
 
+    self.assertTrue(len(log_handler.upload_ignored) == 0, "Some files were ignored")
     self.assertFalse(len(log_handler.upload_order) < len(f_paths), "Some files failed to upload")
     self.assertFalse(len(log_handler.upload_order) > len(f_paths), "Some files were uploaded twice")
     for f_path in f_paths:

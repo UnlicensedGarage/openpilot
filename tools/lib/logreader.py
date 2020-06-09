@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 import os
 import sys
-import json
 import bz2
 import tempfile
-import requests
 import subprocess
 import urllib.parse
-from aenum import Enum
 import capnp
 import numpy as np
 
@@ -23,9 +20,10 @@ OP_PATH = os.path.dirname(os.path.dirname(capnp_log.__file__))
 def index_log(fn):
   index_log_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "index_log")
   index_log = os.path.join(index_log_dir, "index_log")
-  phonelibs_dir = os.path.join(OP_PATH, 'phonelibs')
 
-  subprocess.check_call(["make", "PHONELIBS=" + phonelibs_dir], cwd=index_log_dir, stdout=subprocess.DEVNULL)
+  if not os.path.exists(index_log):
+    phonelibs_dir = os.path.join(OP_PATH, 'phonelibs')
+    subprocess.check_call(["make", "PHONELIBS=" + phonelibs_dir], cwd=index_log_dir, stdout=subprocess.DEVNULL)
 
   try:
     dat = subprocess.check_output([index_log, fn, "-"])
@@ -75,7 +73,8 @@ class MultiLogIterator(object):
       self._idx += 1
     else:
       self._idx = 0
-      self._current_log = next(i for i in range(self._current_log + 1, len(self._log_readers) + 1) if i == len(self._log_readers) or self._log_paths[i] is not None)
+      self._current_log = next(i for i in range(self._current_log + 1, len(self._log_readers) + 1)
+                               if i == len(self._log_readers) or self._log_paths[i] is not None)
       # wraparound
       if self._current_log == len(self._log_readers):
         if self._wraparound:

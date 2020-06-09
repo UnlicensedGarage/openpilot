@@ -18,6 +18,7 @@ if arch == "aarch64" and not os.path.isdir("/system"):
   arch = "larch64"
 
 webcam = bool(ARGUMENTS.get("use_webcam", 0))
+QCOM_REPLAY = arch == "aarch64" and os.getenv("QCOM_REPLAY") is not None
 
 if arch == "aarch64" or arch == "larch64":
   lenv = {
@@ -43,10 +44,9 @@ if arch == "aarch64" or arch == "larch64":
   ]
 
   if arch == "larch64":
-    cpppath += ["#phonelibs/capnp-cpp/include", "#phonelibs/capnp-c/include"]
     libpath += ["#phonelibs/snpe/larch64"]
     libpath += ["#phonelibs/libyuv/larch64/lib"]
-    libpath += ["#external/capnparm/lib", "/usr/lib/aarch64-linux-gnu"]
+    libpath += ["/usr/lib/aarch64-linux-gnu"]
     cflags = ["-DQCOM2", "-mcpu=cortex-a57"]
     cxxflags = ["-DQCOM2", "-mcpu=cortex-a57"]
     rpath = ["/usr/local/lib"]
@@ -57,21 +57,20 @@ if arch == "aarch64" or arch == "larch64":
     cxxflags = ["-DQCOM", "-mcpu=cortex-a57"]
     rpath = ["/system/vendor/lib64"]
 
+    if QCOM_REPLAY:
+      cflags += ["-DQCOM_REPLAY"]
+      cxxflags += ["-DQCOM_REPLAY"]
+
 else:
   lenv = {
     "PATH": "#external/bin:" + os.environ['PATH'],
   }
   cpppath = [
-    "#phonelibs/capnp-cpp/include",
-    "#phonelibs/capnp-c/include",
-    "#phonelibs/zmq/x64/include",
     "#external/tensorflow/include",
   ]
 
   if arch == "Darwin":
     libpath = [
-      "#phonelibs/capnp-cpp/mac/lib",
-      "#phonelibs/capnp-c/mac/lib",
       "#phonelibs/libyuv/mac/lib",
       "#cereal",
       "#selfdrive/common",
@@ -80,12 +79,8 @@ else:
     ]
   else:
     libpath = [
-      "#phonelibs/capnp-cpp/x64/lib",
-      "#phonelibs/capnp-c/x64/lib",
       "#phonelibs/snpe/x86_64-linux-clang",
-      "#phonelibs/zmq/x64/lib",
       "#phonelibs/libyuv/x64/lib",
-      "#external/zmq/lib",
       "#external/tensorflow/lib",
       "#cereal",
       "#selfdrive/common",
@@ -93,8 +88,7 @@ else:
       "/usr/local/lib",
     ]
 
-  rpath = ["phonelibs/capnp-cpp/x64/lib",
-           "phonelibs/zmq/x64/lib",
+  rpath = [
            "external/tensorflow/lib",
            "cereal",
            "selfdrive/common"]
@@ -117,11 +111,9 @@ env = Environment(
     "-g",
     "-fPIC",
     "-O2",
-    "-Werror=implicit-function-declaration",
-    "-Werror=incompatible-pointer-types",
-    "-Werror=int-conversion",
-    "-Werror=return-type",
-    "-Werror=format-extra-args",
+    "-Werror",
+    "-Wno-deprecated-register",
+    "-Wno-inconsistent-missing-override",
   ] + cflags + ccflags_asan,
 
   CPPPATH=cpppath + [
@@ -130,9 +122,7 @@ env = Environment(
     "#phonelibs/bzip2",
     "#phonelibs/libyuv/include",
     "#phonelibs/openmax/include",
-    "#phonelibs/json/src",
     "#phonelibs/json11",
-    "#phonelibs/eigen",
     "#phonelibs/curl/include",
     #"#phonelibs/opencv/include", # use opencv4 instead
     "#phonelibs/libgralloc/include",
@@ -193,11 +183,8 @@ def abspath(x):
     return x[0].path.rsplit("/", 1)[1][:-3]
 
 # still needed for apks
-if arch == 'larch64':
-  zmq = 'zmq'
-else:
-  zmq = FindFile("libzmq.a", libpath)
-Export('env', 'arch', 'zmq', 'SHARED', 'webcam')
+zmq = 'zmq'
+Export('env', 'arch', 'zmq', 'SHARED', 'webcam', 'QCOM_REPLAY')
 
 # cereal and messaging are shared with the system
 SConscript(['cereal/SConscript'])
@@ -215,7 +202,7 @@ Import('_common', '_visionipc', '_gpucommon', '_gpu_libs')
 if SHARED:
   common, visionipc, gpucommon = abspath(common), abspath(visionipc), abspath(gpucommon)
 else:
-  common = [_common, 'json']
+  common = [_common, 'json11']
   visionipc = _visionipc
   gpucommon = [_gpucommon] + _gpu_libs
 
@@ -242,12 +229,12 @@ SConscript(['selfdrive/proclogd/SConscript'])
 SConscript(['selfdrive/ui/SConscript'])
 SConscript(['selfdrive/loggerd/SConscript'])
 
+SConscript(['selfdrive/locationd/SConscript'])
+SConscript(['selfdrive/locationd/models/SConscript'])
+
 if arch == "aarch64":
   SConscript(['selfdrive/logcatd/SConscript'])
   SConscript(['selfdrive/sensord/SConscript'])
   SConscript(['selfdrive/clocksd/SConscript'])
-
-SConscript(['selfdrive/locationd/SConscript'])
-SConscript(['selfdrive/locationd/kalman/SConscript'])
-
-# TODO: finish cereal, dbcbuilder, MPC
+else:
+  SConscript(['tools/lib/index_log/SConscript'])
