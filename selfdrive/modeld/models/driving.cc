@@ -60,11 +60,9 @@ void model_init(ModelState* s, cl_device_id device_id, cl_context context, int t
   for (int i = 0; i < TRAFFIC_CONVENTION_LEN; i++) s->traffic_convention[i] = 0.0;
   s->m->addTrafficConvention(s->traffic_convention, TRAFFIC_CONVENTION_LEN);
 
-  char *string;
-  const int result = read_db_value("IsRHD", &string, NULL);
-  if (result == 0) {
-    bool is_rhd = string[0] == '1';
-    free(string);
+  std::vector<char> result = read_db_bytes("IsRHD");
+  if (result.size() > 0) {
+    bool is_rhd = result[0] == '1';
     if (is_rhd) {
       s->traffic_convention[1] = 1.0;
     } else {
@@ -247,15 +245,19 @@ void fill_longi(cereal::ModelData::LongitudinalData::Builder longi, const float 
   longi.setAccelerations(accel);
 }
 
-void model_publish(PubMaster &pm, uint32_t frame_id,
-                   const ModelDataRaw &net_outputs, uint64_t timestamp_eof) {
+void model_publish(PubMaster &pm, uint32_t vipc_frame_id, uint32_t frame_id,
+                   uint32_t vipc_dropped_frames, float frame_drop, const ModelDataRaw &net_outputs, uint64_t timestamp_eof) {
   // make msg
   capnp::MallocMessageBuilder msg;
   cereal::Event::Builder event = msg.initRoot<cereal::Event>();
   event.setLogMonoTime(nanos_since_boot());
 
+  uint32_t frame_age = (frame_id > vipc_frame_id) ? (frame_id - vipc_frame_id) : 0;
+
   auto framed = event.initModel();
-  framed.setFrameId(frame_id);
+  framed.setFrameId(vipc_frame_id);
+  framed.setFrameAge(frame_age);
+  framed.setFrameDropPerc(frame_drop * 100);
   framed.setTimestampEof(timestamp_eof);
 
   auto lpath = framed.initPath();
@@ -292,12 +294,13 @@ void model_publish(PubMaster &pm, uint32_t frame_id,
 
   auto meta = framed.initMeta();
   fill_meta(meta, net_outputs.meta);
+  event.setValid(frame_drop < MAX_FRAME_DROP);
 
   pm.send("model", msg);
 }
 
-void posenet_publish(PubMaster &pm, uint32_t frame_id,
-                   const ModelDataRaw &net_outputs, uint64_t timestamp_eof) {
+void posenet_publish(PubMaster &pm, uint32_t vipc_frame_id, uint32_t frame_id,
+                     uint32_t vipc_dropped_frames, float frame_drop, const ModelDataRaw &net_outputs, uint64_t timestamp_eof) {
   capnp::MallocMessageBuilder msg;
   cereal::Event::Builder event = msg.initRoot<cereal::Event>();
   event.setLogMonoTime(nanos_since_boot());
@@ -325,8 +328,11 @@ void posenet_publish(PubMaster &pm, uint32_t frame_id,
   kj::ArrayPtr<const float> rot_std_vs(&rot_std_arr[0], 3);
   posenetd.setRotStd(rot_std_vs);
 
+
   posenetd.setTimestampEof(timestamp_eof);
-  posenetd.setFrameId(frame_id);
+  posenetd.setFrameId(vipc_frame_id);
+
+  event.setValid(vipc_dropped_frames < 1);
 
   pm.send("cameraOdometry", msg);
 }
